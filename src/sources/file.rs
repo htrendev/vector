@@ -161,6 +161,14 @@ pub struct FileConfig {
     #[configurable(metadata(docs::human_name = "Glob Minimum Cooldown"))]
     pub glob_minimum_cooldown_ms: Duration,
 
+    /// The backoff delay between reads of inactive files.
+    ///
+    /// TODO
+    #[serde(default = "default_backoff_ms")]
+    #[configurable(metadata(docs::type_unit = "milliseconds"))]
+    #[configurable(metadata(docs::human_name = "Backoff Time"))]
+    pub backoff_ms: usize,
+
     #[configurable(derived)]
     #[serde(alias = "fingerprinting", default)]
     fingerprint: FingerprintConfig,
@@ -258,6 +266,10 @@ const fn default_read_from() -> ReadFromConfig {
 
 const fn default_glob_minimum_cooldown_ms() -> Duration {
     Duration::from_millis(1000)
+}
+
+const fn default_backoff_ms() -> usize {
+    2048
 }
 
 const fn default_multi_line_timeout() -> u64 {
@@ -388,6 +400,7 @@ impl Default for FileConfig {
             offset_key: None,
             data_dir: None,
             glob_minimum_cooldown_ms: default_glob_minimum_cooldown_ms(),
+            backoff_ms: default_backoff_ms(),
             message_start_indicator: None,
             multi_line_timeout: default_multi_line_timeout(), // millis
             multiline: None,
@@ -518,6 +531,7 @@ pub fn file_source(
         .collect::<Vec<PathBuf>>();
     let ignore_before = calculate_ignore_before(config.ignore_older_secs);
     let glob_minimum_cooldown = config.glob_minimum_cooldown_ms;
+    let backoff = config.backoff_ms;
     let (ignore_checkpoints, read_from) = reconcile_position_options(
         config.start_at_beginning,
         config.ignore_checkpoints,
@@ -556,6 +570,7 @@ pub fn file_source(
         line_delimiter: line_delimiter_as_bytes,
         data_dir,
         glob_minimum_cooldown,
+        backoff, // TODO set this to `config.backoff` ???
         fingerprinter: Fingerprinter {
             strategy: config.fingerprint.clone().into(),
             max_line_length: config.max_line_bytes,
@@ -877,6 +892,7 @@ mod tests {
             },
             data_dir: Some(dir.path().to_path_buf()),
             glob_minimum_cooldown_ms: Duration::from_millis(100),
+            backoff_ms: Duration::from_millis(200),
             internal_metrics: FileInternalMetricsConfig {
                 include_file_tag: true,
             },
@@ -895,6 +911,7 @@ mod tests {
             include = [ "/var/log/**/*.log" ]
             file_key = "file"
             glob_minimum_cooldown_ms = 1000
+            backoff_ms = 2048
             multi_line_timeout = 1000
             max_read_bytes = 2048
             line_delimiter = "\n"

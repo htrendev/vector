@@ -207,6 +207,12 @@ pub struct Config {
     #[configurable(metadata(docs::human_name = "Glob Minimum Cooldown"))]
     glob_minimum_cooldown_ms: Duration,
 
+    /// The backoff interval
+    ///
+    /// TODO
+    #[configurable(metadata(docs::human_name = "Backoff Time"))]
+    backoff_ms: usize,
+
     /// Overrides the name of the log field used to add the ingestion timestamp to each event.
     ///
     /// This is useful to compute the latency between important event processing
@@ -292,6 +298,7 @@ impl Default for Config {
             max_line_bytes: default_max_line_bytes(),
             fingerprint_lines: default_fingerprint_lines(),
             glob_minimum_cooldown_ms: default_glob_minimum_cooldown_ms(),
+            backoff_ms: default_backoff_ms(),
             ingestion_timestamp_field: None,
             timezone: None,
             kube_config_file: None,
@@ -551,6 +558,7 @@ struct Source {
     max_line_bytes: usize,
     fingerprint_lines: usize,
     glob_minimum_cooldown: Duration,
+    backoff: usize,
     use_apiserver_cache: bool,
     ingestion_timestamp_field: Option<OwnedTargetPath>,
     delay_deletion: Duration,
@@ -606,6 +614,8 @@ impl Source {
 
         let glob_minimum_cooldown = config.glob_minimum_cooldown_ms;
 
+        let backoff = config.backoff_ms;
+
         let delay_deletion = config.delay_deletion_ms;
 
         let ingestion_timestamp_field = config
@@ -634,6 +644,7 @@ impl Source {
             max_line_bytes: config.max_line_bytes,
             fingerprint_lines: config.fingerprint_lines,
             glob_minimum_cooldown,
+            backoff,
             use_apiserver_cache: config.use_apiserver_cache,
             ingestion_timestamp_field,
             delay_deletion,
@@ -669,6 +680,7 @@ impl Source {
             max_line_bytes,
             fingerprint_lines,
             glob_minimum_cooldown,
+            backoff,
             use_apiserver_cache,
             ingestion_timestamp_field,
             delay_deletion,
@@ -798,6 +810,8 @@ impl Source {
             // This value specifies not exactly the globbing, but interval
             // between the polling the files to watch from the `paths_provider`.
             glob_minimum_cooldown,
+            // TODO
+            backoff,
             // The shape of the log files is well-known in the Kubernetes
             // environment, so we pick the a specially crafted fingerprinter
             // for the log files.
@@ -1018,6 +1032,10 @@ const fn default_max_line_bytes() -> usize {
 
 const fn default_glob_minimum_cooldown_ms() -> Duration {
     Duration::from_millis(60_000)
+}
+
+const fn default_backoff_ms() -> usize {
+    2048
 }
 
 const fn default_fingerprint_lines() -> usize {

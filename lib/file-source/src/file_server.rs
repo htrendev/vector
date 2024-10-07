@@ -47,6 +47,7 @@ where
     pub line_delimiter: Bytes,
     pub data_dir: PathBuf,
     pub glob_minimum_cooldown: Duration,
+    pub backoff: usize,
     pub fingerprinter: Fingerprinter,
     pub oldest_first: bool,
     pub remove_after: Option<Duration>,
@@ -337,7 +338,7 @@ where
             // minimum on the assumption that next time through there will be
             // more lines to read promptly.
             backoff_cap = if global_bytes_read == 0 {
-                cmp::min(2_048, backoff_cap.saturating_mul(2))
+                cmp::min(self.backoff, backoff_cap.saturating_mul(2))
             } else {
                 1
             };
