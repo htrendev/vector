@@ -3,6 +3,7 @@ use std::{
     fs::{self, metadata, File},
     io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
+    time::SystemTime,
 };
 
 use crc::Crc;
@@ -108,6 +109,7 @@ impl Fingerprinter {
         path: &Path,
         buffer: &mut Vec<u8>,
         known_small_files: &mut HashSet<PathBuf>,
+        modified: &mut Option<SystemTime>,
         emitter: &impl FileSourceInternalEvents,
     ) -> Option<FileFingerprint> {
         metadata(path)
@@ -115,6 +117,7 @@ impl Fingerprinter {
                 if metadata.is_dir() {
                     Ok(None)
                 } else {
+                    *modified = metadata.modified().ok();
                     self.get_fingerprint_of_file(path, buffer).map(Some)
                 }
             })
@@ -512,8 +515,15 @@ mod test {
 
         let mut buf = Vec::new();
         let mut small_files = HashSet::new();
+        let mut modified = None;
         assert!(fingerprinter
-            .get_fingerprint_or_log_error(target_dir.path(), &mut buf, &mut small_files, &NoErrors)
+            .get_fingerprint_or_log_error(
+                target_dir.path(),
+                &mut buf,
+                &mut small_files,
+                &mut modified,
+                &NoErrors
+            ) // TODO fix this test too!!!
             .is_none());
     }
 

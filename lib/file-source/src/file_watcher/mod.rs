@@ -2,7 +2,7 @@ use std::{
     fs::{self, File},
     io::{self, BufRead, Seek},
     path::PathBuf,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use bytes::{Bytes, BytesMut};
@@ -45,6 +45,7 @@ pub struct FileWatcher {
     reached_eof: bool,
     last_read_attempt: Instant,
     last_read_success: Instant,
+    last_modified: Instant,
     last_seen: Instant,
     max_line_bytes: usize,
     line_delimiter: Bytes,
@@ -148,6 +149,7 @@ impl FileWatcher {
             reached_eof: false,
             last_read_attempt: ts,
             last_read_success: ts,
+            last_modified: ts,
             last_seen: ts,
             max_line_bytes,
             line_delimiter,
@@ -273,8 +275,19 @@ impl FileWatcher {
     }
 
     #[inline]
+    pub fn set_modified(&mut self, modified: Option<SystemTime>) {
+        if let Some(ts) = modified
+            .and_then(|mtime| mtime.elapsed().ok())
+            .and_then(|diff| Instant::now().checked_sub(diff))
+        {
+            self.last_modified = ts;
+        }
+    }
+
+    #[inline]
     pub fn should_read(&self) -> bool {
-        self.last_read_success.elapsed() < Duration::from_secs(10)
+        self.last_modified.elapsed() < Duration::from_secs(10) // TODO or better compare to the 2s backoff? if modified is longer than backoff?
+            || self.last_read_success.elapsed() < Duration::from_secs(10)
             || self.last_read_attempt.elapsed() > Duration::from_secs(10)
     }
 

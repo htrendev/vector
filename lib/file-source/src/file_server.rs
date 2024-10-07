@@ -101,6 +101,7 @@ where
         checkpointer.read_checkpoints(self.ignore_before);
 
         let mut known_small_files = HashSet::new();
+        let mut modified = None;
 
         let mut existing_files = Vec::new();
         for path in self.paths_provider.paths().into_iter() {
@@ -108,6 +109,7 @@ where
                 &path,
                 &mut fingerprint_buffer,
                 &mut known_small_files,
+                &mut modified,
                 &self.emitter,
             ) {
                 existing_files.push((path, file_id));
@@ -180,6 +182,7 @@ where
                         &path,
                         &mut fingerprint_buffer,
                         &mut known_small_files,
+                        &mut modified,
                         &self.emitter,
                     ) {
                         if let Some(watcher) = fp_map.get_mut(&file_id) {
@@ -191,6 +194,7 @@ where
                                     message = "Continue watching file.",
                                     path = ?path,
                                 );
+                                watcher.set_modified(modified);
                             } else if !was_found_this_cycle {
                                 // matches a file with a different path
                                 info!(
@@ -199,6 +203,7 @@ where
                                     old_path = ?watcher.path
                                 );
                                 watcher.update_path(path).ok(); // ok if this fails: might fix next cycle
+                                watcher.set_modified(modified);
                             } else {
                                 info!(
                                     message = "More than one file has the same fingerprint.",
@@ -217,6 +222,7 @@ where
                                             old_modified_time = ?old_modified_time,
                                         );
                                         watcher.update_path(path).ok(); // ok if this fails: might fix next cycle
+                                        watcher.set_modified(modified);
                                     }
                                 }
                             }
