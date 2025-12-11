@@ -93,6 +93,10 @@ pub struct AmqpSinkConfig {
     /// Maximum number of AMQP channels to keep active (channels are created as needed).
     #[serde(default = "default_max_channels")]
     pub(crate) max_channels: u32,
+
+    #[configurable(derived)]
+    #[serde(default)]
+    pub(crate) request: TowerRequestConfig,
 }
 
 const fn default_max_channels() -> u32 {
@@ -109,6 +113,7 @@ impl Default for AmqpSinkConfig {
             connection: AmqpConfig::default(),
             acknowledgements: AcknowledgementsConfig::default(),
             max_channels: default_max_channels(),
+            request: TowerRequestConfig::default(),
         }
     }
 }
@@ -120,7 +125,10 @@ impl GenerateConfig for AmqpSinkConfig {
             routing_key = "user_id"
             exchange = "test"
             encoding.codec = "json"
-            max_channels = 4"#,
+            max_channels = 4
+
+            [request]
+            retry_max_duration_secs = 10"#,
         )
         .unwrap()
     }
@@ -130,8 +138,9 @@ impl GenerateConfig for AmqpSinkConfig {
 #[typetag::serde(name = "amqp")]
 impl SinkConfig for AmqpSinkConfig {
     async fn build(&self, _cx: SinkContext) -> crate::Result<(VectorSink, Healthcheck)> {
+        let channels = super::channel::new_channel_pool(self)?;
+        let hc = healthcheck(channels).boxed();
         let sink = AmqpSink::new(self.clone()).await?;
-        let hc = healthcheck(sink.channels.clone()).boxed();
         Ok((VectorSink::from_event_streamsink(sink), hc))
     }
 

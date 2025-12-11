@@ -8,11 +8,15 @@ use lapin::{BasicProperties, options::BasicPublishOptions};
 use snafu::Snafu;
 
 use super::channel::AmqpSinkChannels;
-use crate::sinks::prelude::*;
+use crate::sinks::{
+    prelude::*,
+    util::retries::RetryLogic,
+};
 
 /// The request contains the data to send to `AMQP` together
 /// with the information need to route the message.
-pub(super) struct AmqpRequest {
+#[derive(Clone)]
+pub struct AmqpRequest {
     body: Bytes,
     exchange: String,
     routing_key: String,
@@ -58,7 +62,7 @@ impl MetaDescriptive for AmqpRequest {
 }
 
 /// A successful response from `AMQP`.
-pub(super) struct AmqpResponse {
+pub struct AmqpResponse {
     byte_size: usize,
     json_size: GroupedCountByteSize,
 }
@@ -78,6 +82,7 @@ impl DriverResponse for AmqpResponse {
 }
 
 /// The tower service that handles the actual sending of data to `AMQP`.
+#[derive(Clone)]
 pub(super) struct AmqpService {
     pub(super) channels: AmqpSinkChannels,
 }
@@ -101,6 +106,22 @@ pub enum AmqpError {
 
     #[snafu(display("Channel pool error: {}", error))]
     PoolError { error: vector_common::Error },
+}
+
+/// Retry logic for AMQP requests.
+/// This implementation retries on all errors to prevent data loss.
+#[derive(Debug, Clone)]
+pub struct AmqpRetryLogic;
+
+impl RetryLogic for AmqpRetryLogic {
+    type Error = AmqpError;
+    type Request = AmqpRequest;
+    type Response = AmqpResponse;
+
+    fn is_retriable_error(&self, _error: &Self::Error) -> bool {
+        // Retry on all errors to prevent data loss during reconnection
+        true
+    }
 }
 
 impl Service<AmqpRequest> for AmqpService {

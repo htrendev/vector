@@ -2,16 +2,21 @@
 //! event and sends it to `AMQP`.
 use lapin::BasicProperties;
 use serde::Serialize;
+use tower::ServiceBuilder;
 
 use super::{
     BuildError,
-    channel::AmqpSinkChannels,
     config::{AmqpPropertiesConfig, AmqpSinkConfig},
     encoder::AmqpEncoder,
     request_builder::AmqpRequestBuilder,
-    service::AmqpService,
+    service::{AmqpRetryLogic, AmqpService},
 };
-use crate::sinks::prelude::*;
+use crate::sinks::{
+    prelude::*,
+    util::{
+        service::{ServiceBuilderExt, Svc},
+    },
+};
 
 /// Stores the event together with the rendered exchange and routing_key values.
 /// This is passed into the `RequestBuilder` which then splits it out into the event
@@ -26,8 +31,54 @@ pub(super) struct AmqpEvent {
     pub(super) properties: BasicProperties,
 }
 
+/// Transforms an event into an `AMQP` event by rendering the required template fields.
+/// Returns None if there is an error whilst rendering.
+fn make_amqp_event(
+    event: Event,
+    exchange: &Template,
+    routing_key: &Option<Template>,
+    properties: &Option<AmqpPropertiesConfig>,
+) -> Option<AmqpEvent> {
+    let exchange = exchange
+        .render_string(&event)
+        .map_err(|missing_keys| {
+            emit!(TemplateRenderingError {
+                error: missing_keys,
+                field: Some("exchange"),
+                drop_event: true,
+            })
+        })
+        .ok()?;
+
+    let routing_key = match routing_key {
+        None => String::new(),
+        Some(key) => key
+            .render_string(&event)
+            .map_err(|missing_keys| {
+                emit!(TemplateRenderingError {
+                    error: missing_keys,
+                    field: Some("routing_key"),
+                    drop_event: true,
+                })
+            })
+            .ok()?,
+    };
+
+    let properties = match properties {
+        None => BasicProperties::default(),
+        Some(prop) => prop.build(&event)?,
+    };
+
+    Some(AmqpEvent {
+        event,
+        exchange,
+        routing_key,
+        properties,
+    })
+}
+
 pub(super) struct AmqpSink {
-    pub(super) channels: AmqpSinkChannels,
+    service: Svc<AmqpService, AmqpRetryLogic>,
     exchange: Template,
     routing_key: Option<Template>,
     properties: Option<AmqpPropertiesConfig>,
@@ -44,55 +95,18 @@ impl AmqpSink {
         let serializer = config.encoding.build()?;
         let encoder = crate::codecs::Encoder::<()>::new(serializer);
 
+        let request_settings = config.request.into_settings();
+        let service = ServiceBuilder::new()
+            .settings(request_settings, AmqpRetryLogic)
+            .service(AmqpService { channels });
+
         Ok(AmqpSink {
-            channels,
+            service,
             exchange: config.exchange,
             routing_key: config.routing_key,
             properties: config.properties,
             transformer,
             encoder,
-        })
-    }
-
-    /// Transforms an event into an `AMQP` event by rendering the required template fields.
-    /// Returns None if there is an error whilst rendering.
-    fn make_amqp_event(&self, event: Event) -> Option<AmqpEvent> {
-        let exchange = self
-            .exchange
-            .render_string(&event)
-            .map_err(|missing_keys| {
-                emit!(TemplateRenderingError {
-                    error: missing_keys,
-                    field: Some("exchange"),
-                    drop_event: true,
-                })
-            })
-            .ok()?;
-
-        let routing_key = match &self.routing_key {
-            None => String::new(),
-            Some(key) => key
-                .render_string(&event)
-                .map_err(|missing_keys| {
-                    emit!(TemplateRenderingError {
-                        error: missing_keys,
-                        field: Some("routing_key"),
-                        drop_event: true,
-                    })
-                })
-                .ok()?,
-        };
-
-        let properties = match &self.properties {
-            None => BasicProperties::default(),
-            Some(prop) => prop.build(&event)?,
-        };
-
-        Some(AmqpEvent {
-            event,
-            exchange,
-            routing_key,
-            properties,
         })
     }
 
@@ -103,12 +117,25 @@ impl AmqpSink {
                 transformer: self.transformer.clone(),
             },
         };
-        let service = ServiceBuilder::new().service(AmqpService {
-            channels: self.channels.clone(),
-        });
+
+        // Move the fields we need out of self before the closure borrows it
+        let exchange = self.exchange.clone();
+        let routing_key = self.routing_key.clone();
+        let properties = self.properties.clone();
 
         input
-            .filter_map(|event| std::future::ready(self.make_amqp_event(event)))
+            .filter_map(move |event| {
+                let exchange = exchange.clone();
+                let routing_key = routing_key.clone();
+                let properties = properties.clone();
+
+                std::future::ready(make_amqp_event(
+                    event,
+                    &exchange,
+                    &routing_key,
+                    &properties,
+                ))
+            })
             .request_builder(default_request_builder_concurrency_limit(), request_builder)
             .filter_map(|request| async move {
                 match request {
@@ -119,7 +146,7 @@ impl AmqpSink {
                     Ok(req) => Some(req),
                 }
             })
-            .into_driver(service)
+            .into_driver(self.service)
             .protocol("amqp_0_9_1")
             .run()
             .await
