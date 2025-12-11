@@ -154,8 +154,10 @@ where
             // Glob find files to follow, but not too often.
             let now_time = time::Instant::now();
             if next_glob_time <= now_time {
+                info!("glob triggered: {:?}", next_glob_time);
                 // Schedule the next glob time.
                 next_glob_time = now_time.checked_add(self.glob_minimum_cooldown).unwrap();
+                info!("next glob: {:?}", next_glob_time);
 
                 if stats.started_at.elapsed() > Duration::from_secs(1) {
                     stats.report();
@@ -273,7 +275,10 @@ where
             let mut maxed_out_reading_single_file = false;
             for (&file_id, watcher) in &mut fp_map {
                 if !watcher.should_read() {
+                    info!("should not read yet: {:?}", file_id);
                     continue;
+                } else {
+                    error!("will read now: {:?}", file_id);
                 }
 
                 let start = time::Instant::now();
@@ -416,6 +421,9 @@ where
                 Either::Right((_, future)) => shutdown_data = future,
             }
             stats.record("sleeping", start.elapsed());
+            if start.elapsed() > Duration::from_millis(2_200) {
+                error!("sleep too long: {:?}. backoff: {backoff}, backoff_cap: {backoff_cap}, global_bytes_read: {global_bytes_read}, self.max_backoff_ms: {}", start.elapsed(), self.max_backoff_ms);
+            }
         }
     }
 

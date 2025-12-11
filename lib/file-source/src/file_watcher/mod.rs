@@ -323,6 +323,7 @@ impl FileWatcher {
             .and_then(|diff| Instant::now().checked_sub(diff))
         {
             self.last_modified = ts;
+            println!("Elapsed time: {} seconds", ts.elapsed().as_secs());
         }
     }
 
