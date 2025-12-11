@@ -8,10 +8,11 @@ use lapin::{BasicProperties, options::BasicPublishOptions};
 use snafu::Snafu;
 
 use super::channel::AmqpSinkChannels;
-use crate::sinks::prelude::*;
+use crate::sinks::{prelude::*, util::retries::RetryLogic};
 
 /// The request contains the data to send to `AMQP` together
 /// with the information need to route the message.
+#[derive(Clone)]
 pub(super) struct AmqpRequest {
     body: Bytes,
     exchange: String,
@@ -78,6 +79,7 @@ impl DriverResponse for AmqpResponse {
 }
 
 /// The tower service that handles the actual sending of data to `AMQP`.
+#[derive(Clone)]
 pub(super) struct AmqpService {
     pub(super) channels: AmqpSinkChannels,
 }
@@ -101,6 +103,25 @@ pub enum AmqpError {
 
     #[snafu(display("Channel pool error: {}", error))]
     PoolError { error: vector_common::Error },
+}
+
+/// Retry logic for AMQP requests.
+///
+/// All errors are considered retriable: the sink prefers stalling (and
+/// backpressuring the pipeline) over dropping events, even for requests that
+/// may never succeed, such as publishing to a nonexistent exchange. The number
+/// of attempts can be bounded with `request.retry_attempts`.
+#[derive(Debug, Clone)]
+pub(super) struct AmqpRetryLogic;
+
+impl RetryLogic for AmqpRetryLogic {
+    type Error = AmqpError;
+    type Request = AmqpRequest;
+    type Response = AmqpResponse;
+
+    fn is_retriable_error(&self, _error: &Self::Error) -> bool {
+        true
+    }
 }
 
 impl Service<AmqpRequest> for AmqpService {

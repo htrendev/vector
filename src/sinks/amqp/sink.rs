@@ -2,6 +2,7 @@
 //! event and sends it to `AMQP`.
 use lapin::BasicProperties;
 use serde::Serialize;
+use tower::ServiceBuilder;
 
 use super::{
     BuildError,
@@ -9,9 +10,9 @@ use super::{
     config::{AmqpPropertiesConfig, AmqpSinkConfig},
     encoder::AmqpEncoder,
     request_builder::AmqpRequestBuilder,
-    service::AmqpService,
+    service::{AmqpRetryLogic, AmqpService},
 };
-use crate::sinks::prelude::*;
+use crate::sinks::{prelude::*, util::service::TowerRequestSettings};
 
 /// Stores the event together with the rendered exchange and routing_key values.
 /// This is passed into the `RequestBuilder` which then splits it out into the event
@@ -33,6 +34,7 @@ pub(super) struct AmqpSink {
     properties: Option<AmqpPropertiesConfig>,
     transformer: Transformer,
     encoder: vector_lib::codecs::Encoder<()>,
+    request_settings: TowerRequestSettings,
 }
 
 impl AmqpSink {
@@ -51,6 +53,7 @@ impl AmqpSink {
             properties: config.properties,
             transformer,
             encoder,
+            request_settings: config.request.into_settings(),
         })
     }
 
@@ -103,9 +106,11 @@ impl AmqpSink {
                 transformer: self.transformer.clone(),
             },
         };
-        let service = ServiceBuilder::new().service(AmqpService {
-            channels: self.channels.clone(),
-        });
+        let service = ServiceBuilder::new()
+            .settings(self.request_settings.clone(), AmqpRetryLogic)
+            .service(AmqpService {
+                channels: self.channels.clone(),
+            });
 
         input
             .filter_map(|event| std::future::ready(self.make_amqp_event(event)))

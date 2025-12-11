@@ -93,6 +93,10 @@ pub struct AmqpSinkConfig {
     /// Maximum number of AMQP channels to keep active (channels are created as needed).
     #[serde(default = "default_max_channels")]
     pub(crate) max_channels: u32,
+
+    #[configurable(derived)]
+    #[serde(default)]
+    pub(crate) request: TowerRequestConfig,
 }
 
 const fn default_max_channels() -> u32 {
@@ -109,6 +113,7 @@ impl Default for AmqpSinkConfig {
             connection: AmqpConfig::default(),
             acknowledgements: AcknowledgementsConfig::default(),
             max_channels: default_max_channels(),
+            request: TowerRequestConfig::default(),
         }
     }
 }
