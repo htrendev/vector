@@ -8,6 +8,29 @@ use vector_lib::{
 use super::{channel::AmqpSinkChannels, sink::AmqpSink};
 use crate::{amqp::AmqpConfig, sinks::prelude::*};
 
+/// Delivery mode for AMQP messages.
+#[configurable_component]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AmqpDeliveryMode {
+    /// Transient (non-persistent) delivery. Messages are kept in memory only
+    /// and are lost if the broker restarts.
+    Transient,
+
+    /// Persistent delivery. Messages routed to durable queues are written to
+    /// disk and survive a broker restart.
+    Persistent,
+}
+
+impl AmqpDeliveryMode {
+    const fn as_u8(self) -> u8 {
+        match self {
+            Self::Transient => 1,
+            Self::Persistent => 2,
+        }
+    }
+}
+
 /// AMQP properties configuration.
 #[configurable_component]
 #[configurable(title = "Configure the AMQP message properties.")]
@@ -24,6 +47,12 @@ pub struct AmqpPropertiesConfig {
 
     /// Priority for AMQP messages. It can be templated to an integer between 0 and 255 inclusive.
     pub(crate) priority: Option<UnsignedIntTemplate>,
+
+    /// Delivery mode for AMQP messages.
+    ///
+    /// If not specified, the `delivery_mode` property is not set on published
+    /// messages and the broker treats them as transient.
+    pub(crate) delivery_mode: Option<AmqpDeliveryMode>,
 }
 
 impl AmqpPropertiesConfig {
@@ -53,6 +82,9 @@ impl AmqpPropertiesConfig {
             // Clamp the value to the range of 0-255, as AMQP priority is a u8.
             let priority = priority.clamp(0, u8::MAX.into()) as u8;
             prop = prop.with_priority(priority);
+        }
+        if let Some(delivery_mode) = &self.delivery_mode {
+            prop = prop.with_delivery_mode(delivery_mode.as_u8());
         }
         Some(prop)
     }
@@ -229,6 +261,66 @@ mod tests {
             let event = LogEvent::from_str_legacy("message");
             assert_config_priority_eq(config, &event, 1);
         }
+    }
+
+    #[test]
+    pub fn parse_config_delivery_mode() {
+        for (format, config, expected) in [
+            (
+                Format::Yaml,
+                r#"
+            exchange: "test"
+            encoding:
+                codec: "json"
+            connection_string: "amqp://user:password@127.0.0.1:5672/"
+            properties:
+                delivery_mode: "persistent"
+            "#,
+                AmqpDeliveryMode::Persistent,
+            ),
+            (
+                Format::Toml,
+                r#"
+            exchange = "test"
+            encoding.codec = "json"
+            connection_string = "amqp://user:password@127.0.0.1:5672/"
+            properties = { delivery_mode = "transient" }
+            "#,
+                AmqpDeliveryMode::Transient,
+            ),
+            (
+                Format::Json,
+                r#"
+            {
+                "exchange": "test",
+                "encoding": {
+                    "codec": "json"
+                },
+                "connection_string": "amqp://user:password@127.0.0.1:5672/",
+                "properties": {
+                    "delivery_mode": "persistent"
+                }
+            }
+            "#,
+                AmqpDeliveryMode::Persistent,
+            ),
+        ] {
+            let config: AmqpSinkConfig = deserialize(config, format).unwrap();
+            assert_eq!(config.properties.unwrap().delivery_mode.unwrap(), expected);
+        }
+    }
+
+    #[test]
+    pub fn parse_config_delivery_mode_invalid() {
+        let config = r#"
+            exchange: "test"
+            encoding:
+                codec: "json"
+            connection_string: "amqp://user:password@127.0.0.1:5672/"
+            properties:
+                delivery_mode: "durable"
+            "#;
+        assert!(deserialize::<AmqpSinkConfig>(config, Format::Yaml).is_err());
     }
 
     #[test]

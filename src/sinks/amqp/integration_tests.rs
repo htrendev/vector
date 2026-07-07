@@ -1,6 +1,6 @@
 use std::{collections::HashSet, time::Duration};
 
-use config::AmqpPropertiesConfig;
+use config::{AmqpDeliveryMode, AmqpPropertiesConfig};
 use futures::StreamExt;
 use lapin::types::ShortString;
 use vector_lib::{config::LogNamespace, event::LogEvent};
@@ -359,4 +359,107 @@ async fn amqp_priority_template_out_of_bounds() {
     crate::test_util::trace_init();
 
     amqp_priority_with_template("100000", None, Some(u8::MAX)).await;
+}
+
+async fn amqp_delivery_mode(
+    delivery_mode: Option<AmqpDeliveryMode>,
+    expected_delivery_mode: Option<u8>,
+) {
+    let mut config = make_config();
+    let exchange = format!("test-{}-exchange", random_string(10));
+    config.exchange = Template::try_from(exchange.as_str()).unwrap();
+    let exchange: ShortString = exchange.into();
+    config.properties = Some(AmqpPropertiesConfig {
+        delivery_mode,
+        ..Default::default()
+    });
+
+    await_connection(&config.connection).await;
+    let (_conn, channel) = config.connection.connect().await.unwrap();
+    let exchange_opts = lapin::options::ExchangeDeclareOptions {
+        auto_delete: true,
+        ..Default::default()
+    };
+    channel
+        .exchange_declare(
+            exchange.clone(),
+            lapin::ExchangeKind::Fanout,
+            exchange_opts,
+            lapin::types::FieldTable::default(),
+        )
+        .await
+        .unwrap();
+
+    let cx = SinkContext::default();
+    let (sink, healthcheck) = config.build(cx).await.unwrap();
+    healthcheck.await.expect("Health check failed");
+
+    // prepare consumer
+    let queue: ShortString = format!("test-{}-queue", random_string(10)).into();
+    let queue_opts = lapin::options::QueueDeclareOptions {
+        auto_delete: true,
+        ..Default::default()
+    };
+    channel
+        .queue_declare(
+            queue.clone(),
+            queue_opts,
+            lapin::types::FieldTable::default(),
+        )
+        .await
+        .unwrap();
+
+    channel
+        .queue_bind(
+            queue.clone(),
+            exchange,
+            "".into(),
+            lapin::options::QueueBindOptions::default(),
+            lapin::types::FieldTable::default(),
+        )
+        .await
+        .unwrap();
+
+    let consumer = format!("test-{}-consumer", random_string(10));
+    let mut consumer = channel
+        .basic_consume(
+            queue.clone(),
+            consumer.into(),
+            lapin::options::BasicConsumeOptions::default(),
+            lapin::types::FieldTable::default(),
+        )
+        .await
+        .unwrap();
+
+    let input = random_string(100);
+    let event = LogEvent::from_str_legacy(&input);
+
+    let events = futures::stream::iter(vec![event]);
+    run_and_assert_sink_compliance(sink, events, &SINK_TAGS).await;
+
+    if let Ok(Some(try_msg)) = tokio::time::timeout(Duration::from_secs(10), consumer.next()).await
+    {
+        let msg = try_msg.unwrap();
+        let msg_delivery_mode = *msg.properties.delivery_mode();
+        let output = String::from_utf8_lossy(msg.data.as_slice()).into_owned();
+
+        assert_eq!(msg_delivery_mode, expected_delivery_mode);
+        assert_eq!(output, input);
+    } else {
+        panic!("Did not consume message in time.");
+    }
+}
+
+#[tokio::test]
+async fn amqp_delivery_mode_persistent() {
+    crate::test_util::trace_init();
+
+    amqp_delivery_mode(Some(AmqpDeliveryMode::Persistent), Some(2)).await;
+}
+
+#[tokio::test]
+async fn amqp_delivery_mode_unset() {
+    crate::test_util::trace_init();
+
+    amqp_delivery_mode(None, None).await;
 }

@@ -506,6 +506,25 @@ generated: components: sinks: amqp: configuration: {
 				required:    false
 				type: string: {}
 			}
+			delivery_mode: {
+				description: """
+					Delivery mode for AMQP messages.
+
+					If not specified, the `delivery_mode` property is not set on published
+					messages and the broker treats them as transient.
+					"""
+				required: false
+				type: string: enum: {
+					persistent: """
+						Persistent delivery. Messages routed to durable queues are written to
+						disk and survive a broker restart.
+						"""
+					transient: """
+						Transient (non-persistent) delivery. Messages are kept in memory only
+						and are lost if the broker restarts.
+						"""
+				}
+			}
 			expiration_ms: {
 				description: "Expiration for AMQP messages (in milliseconds)."
 				required:    false
