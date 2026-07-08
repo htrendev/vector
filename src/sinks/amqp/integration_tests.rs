@@ -28,7 +28,8 @@ pub fn make_config() -> AmqpSinkConfig {
     let pass = std::env::var("AMQP_PASSWORD").unwrap_or_else(|_| "guest".to_string());
     let host = std::env::var("AMQP_HOST").unwrap_or_else(|_| "rabbitmq".to_string());
     let vhost = std::env::var("AMQP_VHOST").unwrap_or_else(|_| "%2f".to_string());
-    config.connection.connection_string = format!("amqp://{user}:{pass}@{host}:5672/{vhost}");
+    config.connection.connection_string =
+        format!("amqp://{user}:{pass}@{host}:5672/{vhost}").into();
     config
 }
 
@@ -42,6 +43,42 @@ async fn healthcheck() {
     await_connection(&config.connection).await;
     let channels = new_channel_pool(&config).unwrap();
     super::config::healthcheck(channels).await.unwrap();
+}
+
+#[tokio::test]
+async fn amqp_multiple_urls_failover() {
+    crate::test_util::trace_init();
+    let exchange = format!("test-{}-exchange", random_string(10));
+
+    let mut config = make_config();
+    config.exchange = Template::try_from(exchange.as_str()).unwrap();
+    await_connection(&config.connection).await;
+
+    // The first server is unreachable; connections must fail over to the second.
+    let good_url = config.connection.connection_urls().remove(0);
+    config.connection.connection_string = vec![
+        "amqp://guest:guest@127.0.0.1:1/%2f?timeout=2".to_string(),
+        good_url,
+    ]
+    .into();
+
+    let channels = new_channel_pool(&config).unwrap();
+    super::config::healthcheck(channels).await.unwrap();
+}
+
+#[tokio::test]
+async fn amqp_multiple_urls_all_unreachable() {
+    crate::test_util::trace_init();
+
+    let mut config = make_config();
+    config.connection.connection_string = vec![
+        "amqp://guest:guest@127.0.0.1:1/%2f?timeout=2".to_string(),
+        "amqp://guest:guest@127.0.0.1:2/%2f?timeout=2".to_string(),
+    ]
+    .into();
+
+    let channels = new_channel_pool(&config).unwrap();
+    assert!(super::config::healthcheck(channels).await.is_err());
 }
 
 #[tokio::test]

@@ -24,7 +24,7 @@ generated: components: sources: amqp: configuration: {
 	}
 	connection_string: {
 		description: """
-			URI for the AMQP server.
+			URI for the AMQP server, or a list of URIs to fail over between.
 
 			The URI has the format of
 			`amqp://<user>:<password>@<host>:<port>/<vhost>?timeout=<seconds>`.
@@ -34,6 +34,10 @@ generated: components: sources: amqp: configuration: {
 			To connect over TLS, a scheme of `amqps` can be specified instead. For example,
 			`amqps://...`. Additional TLS settings, such as client certificate verification, can be
 			configured under the `tls` section.
+
+			When multiple URIs are given, servers are tried in a round-robin fashion until a
+			connection is established, which is then used until the next connection error. Set the
+			`timeout` parameter on each URI so that unreachable servers do not delay failover.
 			"""
 		required: true
 		type: string: examples: ["amqp://user:password@127.0.0.1:5672/%2f?timeout=10"]
